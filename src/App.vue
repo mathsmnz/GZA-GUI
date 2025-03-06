@@ -1,5 +1,5 @@
 <script>
-import { ref, onMounted } from "vue";
+import {ref, onMounted} from "vue";
 import * as WEBIFC from "web-ifc";
 import * as THREE from "three";
 import * as OBC from "@thatopen/components";
@@ -42,21 +42,34 @@ export default {
 
       components.init();
 
-      world.camera.controls.setLookAt(12, 6, 8, 0, 0, -10);
+      await world.camera.controls.setLookAt(12, 6, 8, 0, 0, -10);
 
       world.scene.setup();
       world.scene.three.background = new THREE.Color(0xFFFFFF);
     };
 
-    const captureScreenshot = () => {
+    const captureScreenshot = async () => {
       if (!world || !world.renderer || !container.value) return;
 
       // Esconde o grid antes da captura
       if (grid) grid.three.visible = false;
 
+      let activePlan = plans.value.current;
+      if (!activePlan) {
+        activePlan = plans.value.list[0];
+        console.warn("Nenhuma planta ativa para captura.");
+      }
+
+      // Ajusta a câmera para maximizar o zoom no plano ativo
+      await fitToPlanView();
+
+      // Pequeno delay para garantir que a cena seja atualizada antes da captura
+      await new Promise(resolve => setTimeout(resolve, 500));
+
       // Renderiza a cena
       world.renderer.three.render(world.scene.three, world.camera.three);
 
+      // Captura a imagem
       const screenshot = container.value.querySelector('canvas').toDataURL('image/png');
       const link = document.createElement('a');
       link.href = screenshot;
@@ -66,6 +79,67 @@ export default {
       // Restaura a visibilidade do grid após a captura
       if (grid) grid.three.visible = true;
     };
+
+    const fit = async (meshes, offset = 1.5) => {
+      if (!this.enabled)
+        return;
+      const maxNum = Number.MAX_VALUE;
+      const minNum = Number.MIN_VALUE;
+      const min = new THREE.Vector3(maxNum, maxNum, maxNum);
+      const max = new THREE.Vector3(minNum, minNum, minNum);
+      for (const mesh of meshes) {
+        const box2 = new THREE.Box3().setFromObject(mesh);
+        if (box2.min.x < min.x)
+          min.x = box2.min.x;
+        if (box2.min.y < min.y)
+          min.y = box2.min.y;
+        if (box2.min.z < min.z)
+          min.z = box2.min.z;
+        if (box2.max.x > max.x)
+          max.x = box2.max.x;
+        if (box2.max.y > max.y)
+          max.y = box2.max.y;
+        if (box2.max.z > max.z)
+          max.z = box2.max.z;
+      }
+      const box = new THREE.Box3(min, max);
+      const sceneSize = new THREE.Vector3();
+      box.getSize(sceneSize);
+      const sceneCenter = new THREE.Vector3();
+      box.getCenter(sceneCenter);
+      const radius = Math.max(sceneSize.x, sceneSize.y, sceneSize.z) * offset;
+      const sphere = new THREE.Sphere(sceneCenter, radius);
+      await this.controls.fitToSphere(sphere, true);
+    }
+
+// Função que ajusta o zoom no plano antes da captura
+    const fitToPlanView = async (offset = .6) => {
+
+      const boundingBox = model.boundingBox;
+      const center = new THREE.Vector3();
+      boundingBox.getCenter(center);
+
+      const size = new THREE.Vector3();
+      boundingBox.getSize(size);
+
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const minDim = Math.min(size.x, size.y, size.z);
+
+      const box = new THREE.Box3(maxDim, minDim);
+      const sceneSize = new THREE.Vector3();
+      box.getSize(sceneSize);
+      const sceneCenter = new THREE.Vector3();
+      box.getCenter(sceneCenter);
+
+      const radius = Math.max(sceneSize.x, sceneSize.y, sceneSize.z) * offset;
+      const sphere = new THREE.Sphere(sceneCenter, radius);
+
+      await world.camera.controls.fitToSphere(sphere, true);
+
+      // Garante que a câmera está olhando para o modelo
+      world.camera.three.lookAt(sceneCenter);
+    };
+
 
     // Setup grid
     const setupGrid = (world) => {
@@ -98,6 +172,8 @@ export default {
         const size = new THREE.Vector3();
         boundingBox.getSize(size);
 
+        model.boundingBox = boundingBox;
+
         // Calcular a distância ideal da câmera para enquadrar o modelo
         const fov = world.camera.three.fov * (Math.PI / 180); // Converter FOV para radianos
         const maxDim = Math.max(size.x, size.y, size.z);
@@ -124,8 +200,6 @@ export default {
       plans.value.world = world;
       await plans.value.generate(model);
 
-
-
       const cullers = components.get(OBC.Cullers);
       culler.value = cullers.create(world);
       for (const fragment of model.items) {
@@ -144,7 +218,7 @@ export default {
       classifier.byModel(model.uuid, model);
       classifier.byEntity(model);
 
-      modelItems = classifier.find({ models: [model.uuid] });
+      modelItems = classifier.find({models: [model.uuid]});
 
       const thickItems = classifier.find({
         entities: ["IFCWALLSTANDARDCASE", "IFCWALL"],
@@ -154,8 +228,8 @@ export default {
         entities: ["IFCDOOR", "IFCWINDOW", "IFCPLATE", "IFCMEMBER"],
       });
 
-      const grayFill = new THREE.MeshBasicMaterial({ color: "gray", side: 2 });
-      const blackLine = new THREE.LineBasicMaterial({ color: "black" });
+      const grayFill = new THREE.MeshBasicMaterial({color: "gray", side: 2});
+      const blackLine = new THREE.LineBasicMaterial({color: "black"});
       const blackOutline = new THREE.MeshBasicMaterial({
         color: "black",
         opacity: 0.5,
@@ -164,12 +238,12 @@ export default {
       });
 
       edges.styles.create(
-        "thick",
-        new Set(),
-        world,
-        blackLine,
-        grayFill,
-        blackOutline,
+          "thick",
+          new Set(),
+          world,
+          blackLine,
+          grayFill,
+          blackOutline,
       );
 
       const frag = fragments.value;
@@ -177,7 +251,7 @@ export default {
       for (const fragID in thickItems) {
         const foundFrag = frag.list.get(fragID);
         if (!foundFrag) continue;
-        const { mesh } = foundFrag;
+        const {mesh} = foundFrag;
         edges.styles.list.thick.fragments[fragID] = new Set(thickItems[fragID]);
         edges.styles.list.thick.meshes.add(mesh);
       }
@@ -187,7 +261,7 @@ export default {
       for (const fragID in thinItems) {
         const foundFrag = frag.list.get(fragID);
         if (!foundFrag) continue;
-        const { mesh } = foundFrag;
+        const {mesh} = foundFrag;
         edges.styles.list.thin.fragments[fragID] = new Set(thinItems[fragID]);
         edges.styles.list.thin.meshes.add(mesh);
       }
@@ -234,7 +308,7 @@ export default {
       world.scene.three.add(model); // Add model to the scene
       fileName = "EXAMPLE"
 
-      highlighter.setup({ world });
+      highlighter.setup({world});
       highlighter.zoomToSelection = true;
 
       // Initialize fragments after the scene is set up
@@ -345,6 +419,7 @@ export default {
       world.scene.three.background = new THREE.Color("white");
       const plansComponent = world.components.get(OBCF.Plans);
       plansComponent.goTo(plan.id);
+      console.log(world.camera);
       culler.needsUpdate = true;
     };
 
@@ -352,7 +427,7 @@ export default {
       world.renderer.postproduction.customEffects.minGloss = 0.0;
       highlighter.backupColor = null;
       highlighter.clear();
-      classifier.resetColor(classifier.find({ models: [model.uuid] }));
+      classifier.resetColor(classifier.find({models: [model.uuid]}));
       world.scene.three.background = null;
       const plansComponent = world.components.get(OBCF.Plans);
       plansComponent.exitPlanView();
@@ -367,7 +442,7 @@ export default {
       }
     });
 
-    return { container, loadIFC, saveFile, activatePlan, exitPlanView, plans, captureScreenshot }; // Expose loadIFC to the template
+    return {container, loadIFC, saveFile, activatePlan, exitPlanView, plans, captureScreenshot}; // Expose loadIFC to the template
   },
 };
 </script>
@@ -380,15 +455,15 @@ export default {
     <!-- IFC Viewer Controls -->
     <div class="w-64 p-4 bg-gray-100 overflow-y-auto">
       <button @click="loadIFC"
-        class="w-full text-left bg-blue-500 text-white p-2 mt-4 rounded shadow hover:bg-blue-600">
+              class="w-full text-left bg-blue-500 text-white p-2 mt-4 rounded shadow hover:bg-blue-600">
         Carregar Novo IFC
       </button>
       <button @click="saveFile"
-        class="w-full text-left bg-green-500 text-white p-2 mt-4 rounded shadow hover:bg-green-600">
+              class="w-full text-left bg-green-500 text-white p-2 mt-4 rounded shadow hover:bg-green-600">
         Salvar IFC
       </button>
-      <button @click="captureScreenshot"
-        class="w-full text-left bg-purple-500 text-white p-2 mt-4 rounded shadow hover:bg-purple-600">
+      <button @click=" captureScreenshot"
+              class="w-full text-left bg-purple-500 text-white p-2 mt-4 rounded shadow hover:bg-purple-600">
         Capturar Tela
       </button>
     </div>
@@ -409,11 +484,11 @@ export default {
     <!-- Render plans when available -->
     <div v-else>
       <button v-for="plan in plans.list" :key="plan.id"
-        class="w-full text-left bg-white p-2 mb-2 rounded shadow hover:bg-gray-200" @click="activatePlan(plan)">
+              class="w-full text-left bg-white p-2 mb-2 rounded shadow hover:bg-gray-200" @click="activatePlan(plan)">
         {{ plan.name }}
       </button>
       <button class="w-full text-left bg-red-500 text-white p-2 mt-4 rounded shadow hover:bg-red-600"
-        @click="exitPlanView">
+              @click="exitPlanView">
         Sair
       </button>
     </div>
